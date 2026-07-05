@@ -1,0 +1,9 @@
+{
+  "name": "air-alerts-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Карта повітряних тривог по областях України (alerts.in.ua) + демо-симуляція цілей",
+  "scripts": {
+    "dev": "echo 'Локально: просто відкрийте public/index.html у браузері. API-функція працює тільки на Vercel (vercel dev), або задеплойте проєкт.'"
+  }
+}
