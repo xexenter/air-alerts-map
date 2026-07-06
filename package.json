@@ -2,11 +2,11 @@
   "name": "air-alerts-map",
   "version": "1.0.0",
   "private": true,
-  "description": "Карта повітряних тривог по областях України (alerts.in.ua) + демо-симуляція цілей + Telegram-бот сповіщень",
+  "description": "Карта повітряних тривог по областях України (alerts.in.ua) + демо-симуляція цілей + Telegram-бот",
+  "dependencies": {
+    "@vercel/kv": "latest"
+  },
   "scripts": {
     "dev": "echo 'Локально: просто відкрийте public/index.html у браузері. API-функції працюють тільки на Vercel (vercel dev), або задеплойте проєкт.'"
-  },
-  "dependencies": {
-    "@upstash/redis": "^1.34.0"
   }
 }
