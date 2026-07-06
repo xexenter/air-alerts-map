@@ -93,6 +93,43 @@
     color:var(--text-muted); margin-bottom:10px; font-weight:600;
   }
   .threat-list{ overflow-y:auto; flex:1; }
+
+  .tab-switcher{ display:flex; gap:4px; }
+  .tab-btn{
+    flex:1; background:var(--bg-panel-2); border:1px solid var(--line);
+    color:var(--text-muted); font-family:'IBM Plex Sans'; font-size:11.5px;
+    font-weight:600; padding:8px 6px; border-radius:6px; cursor:pointer;
+    text-transform:uppercase; letter-spacing:0.4px;
+  }
+  .tab-btn.active{ background:var(--threat); color:#0B1220; border-color:var(--threat); }
+  .tab-btn:not(.active):hover{ color:var(--text-main); }
+
+  .feed-empty{ padding:24px 18px; color:var(--text-muted); font-size:12.5px; line-height:1.6; }
+  .feed-item{ padding:11px 18px; border-bottom:1px solid var(--line); font-size:12px; line-height:1.5; }
+  .feed-item .feed-time{ font-family:'IBM Plex Mono'; color:var(--text-muted); font-size:10.5px; margin-right:6px; }
+  .drone-icon-wrap{ background:transparent !important; border:none !important; }
+  .drone-icon{
+    width:26px; height:26px;
+    filter: drop-shadow(0 0 4px rgba(232,56,74,0.85));
+    transition: filter 0.2s ease;
+  }
+  .drone-icon svg{ display:block; overflow:visible; }
+  .drone-icon-wrap.selected .drone-icon{
+    filter: drop-shadow(0 0 7px rgba(255,255,255,0.95));
+  }
+  .drone-icon-wrap.selected .drone-icon svg path{ fill:#E8384A; stroke:#ffffff; }
+
+  /* пасхалка на Кремлі — з'являється лише при значному наближенні */
+  .kremlin-easter-egg{
+    font-family:'IBM Plex Mono'; font-weight:700; font-size:11px;
+    color:#fff; text-shadow:0 0 3px #000, 0 0 6px #000;
+    white-space:nowrap; pointer-events:none;
+    opacity:0; transition:opacity 0.3s ease;
+  }
+  .kremlin-easter-egg.visible{ opacity:1; }
+
+  .feed-item.alert-on{ color:var(--alert); }
+  .feed-item.alert-off{ color:#4CAF7D; }
   .threat-card{ padding:12px 18px; border-bottom:1px solid var(--line); cursor:pointer; transition:background 0.15s; }
   .threat-card:hover{background:var(--bg-panel-2);}
   .threat-card.selected{background:var(--bg-panel-2); box-shadow:inset 3px 0 0 var(--threat);}
@@ -164,8 +201,14 @@
       <div id="detail-panel" style="flex:0 0 auto; border-bottom:1px solid var(--line);">
         <div class="detail-empty">Оберіть мітку на карті або зі списку нижче, щоб побачити тип цілі, швидкість, висоту та розрахунковий час підльоту.</div>
       </div>
-      <div class="aside-section" style="border-bottom:1px solid var(--line); padding-bottom:10px;"><h2>Активні цілі</h2></div>
+      <div class="aside-section" style="border-bottom:none; padding-bottom:0;">
+        <div class="tab-switcher">
+          <button class="tab-btn active" data-tab="threats">Цілі</button>
+          <button class="tab-btn" data-tab="feed">Повідомлення</button>
+        </div>
+      </div>
       <div class="threat-list" id="threat-list"></div>
+      <div class="threat-list" id="message-feed" style="display:none;"></div>
     </aside>
   </main>
 
@@ -206,13 +249,21 @@ const THREAT_TYPES = [
       підписами міст/сіл, які самі з'являються при наближенні —
       так само, як у звичайних супутникових картах.
    ============================================================ */
+// Межі, за які не можна виїхати панорамуванням — приблизно від Польщі
+// на заході до Москви на сході, від Білорусі на півночі до Чорного моря.
+const MAP_BOUNDS = L.latLngBounds([42.0, 17.5], [56.5, 41.5]);
+
 const map = L.map('map', {
   zoomControl: true,
   attributionControl: true,
   minZoom: 5,
   maxZoom: 15,
-  worldCopyJump: true,
+  worldCopyJump: false,
+  maxBounds: MAP_BOUNDS,
+  maxBoundsViscosity: 1.0, // 1.0 = карта "пружинить" і не пускає за межі зовсім
 }).setView([48.7, 31.3], 6);
+
+map.setMinZoom(map.getBoundsZoom(MAP_BOUNDS, true));
 
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
@@ -256,6 +307,28 @@ function setOblastAlerted(id, alerted){
 }
 
 /* ============================================================
+   4b. Маленька пасхалка — з'являється тільки коли добре наблизити
+       карту саме на Кремль (жарт, не для показу з першого погляду).
+   ============================================================ */
+const kremlinIcon = L.divIcon({
+  className: 'kremlin-egg-wrap',
+  html: `<div class="kremlin-easter-egg">путін хуйло</div>`,
+  iconSize: [120, 16],
+  iconAnchor: [-8, 8],
+});
+const kremlinMarker = L.marker([55.7520, 37.6175], { icon: kremlinIcon, interactive:false }).addTo(map);
+
+function updateKremlinEgg(){
+  const el = kremlinMarker.getElement();
+  if(!el) return;
+  const label = el.querySelector('.kremlin-easter-egg');
+  if(label) label.classList.toggle('visible', map.getZoom() >= 11);
+}
+map.on('zoomend', updateKremlinEgg);
+map.on('add', updateKremlinEgg);
+setTimeout(updateKremlinEgg, 300);
+
+/* ============================================================
    5. Симуляція цілей (тестові маршрути прикордоння -> вглиб),
       тепер по-справжньому на географічних координатах.
    ============================================================ */
@@ -264,11 +337,16 @@ let threatIdCounter = 1;
 let selectedThreatId = null;
 const threatLayerGroup = L.layerGroup().addTo(map);
 
+// Точки вильоту — навмисно ТІЛЬКИ на території Росії (аеродроми
+// стратегічної авіації, прикордонні області, чорноморська база флоту
+// в Новоросійську). Крим на карті лишається українською областю і не
+// використовується як точка запуску.
 const SPAWN_EDGES = [
-  { from:[51.0, 36.6], biasTo:['sumy','kharkiv','chernihiv','poltava'] },
-  { from:[48.5, 40.0], biasTo:['luhansk','donetsk','zaporizhia','dnipro'] },
-  { from:[44.8, 34.0], biasTo:['krym','kherson','zaporizhia'] },
-  { from:[45.0, 30.3], biasTo:['odesa','mykolaiv','kherson'] },
+  { from:[52.6, 34.4],  biasTo:['chernihiv','sumy'] },              // Брянська обл. (РФ)
+  { from:[50.6, 36.6],  biasTo:['kharkiv','sumy','poltava'] },      // Бєлгородська обл. (РФ)
+  { from:[47.2, 39.7],  biasTo:['donetsk','luhansk','zaporizhia'] },// Ростовська обл. (РФ)
+  { from:[51.48, 46.2], biasTo:['dnipro','kharkiv','poltava','kyiv'] }, // Енгельс, Саратовська обл. (РФ, аеродром стратегічної авіації)
+  { from:[44.7, 37.8],  biasTo:['odesa','mykolaiv','kherson'] },    // Новоросійськ (РФ, чорноморський флот)
 ];
 
 function pickTarget(bias){
@@ -281,6 +359,30 @@ function haversineKm(lat1,lng1,lat2,lng2){
   const dLat=toRad(lat2-lat1), dLng=toRad(lng2-lng1);
   const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLng/2)**2;
   return 2*R*Math.asin(Math.sqrt(a));
+}
+
+function bearingDeg(lat1,lng1,lat2,lng2){
+  const toRad=d=>d*Math.PI/180, toDeg=r=>r*180/Math.PI;
+  const y = Math.sin(toRad(lng2-lng1))*Math.cos(toRad(lat2));
+  const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lng2-lng1));
+  return (toDeg(Math.atan2(y,x))+360)%360;
+}
+
+// Стилізована силует дрона-камікадзе (не фото, власна проста SVG-піктограма) —
+// білий контур з червоним світінням, добре видно і на зелені, і на полях.
+const DRONE_SVG = `
+  <svg viewBox="0 0 28 28" width="26" height="26">
+    <path d="M14 2 L23 22 L14 17 L5 22 Z" fill="#ffffff" stroke="#E8384A" stroke-width="1.6" stroke-linejoin="round"/>
+    <circle cx="14" cy="9" r="1.6" fill="#E8384A"/>
+  </svg>`;
+
+function makeDroneIcon(heading){
+  return L.divIcon({
+    className: 'drone-icon-wrap',
+    html: `<div class="drone-icon" style="transform:rotate(${heading}deg)">${DRONE_SVG}</div>`,
+    iconSize: [26,26],
+    iconAnchor: [13,13],
+  });
 }
 
 function oblastNameById(id){
@@ -310,11 +412,10 @@ function spawnThreat(){
     realFlightSeconds,
   };
 
-  const marker = L.circleMarker(edge.from, {
-    radius: 5, color:'#0B1220', weight:1.5, fillColor:'#E8A33D', fillOpacity:1,
-  }).addTo(threatLayerGroup);
+  const heading = bearingDeg(edge.from[0], edge.from[1], target.lat, target.lng);
+  const marker = L.marker(edge.from, { icon: makeDroneIcon(heading) }).addTo(threatLayerGroup);
   const trail = L.polyline([edge.from, edge.from], {
-    color:'#E8A33D', weight:1.4, dashArray:'3 3', opacity:0.55,
+    color:'#E8384A', weight:1.4, dashArray:'3 3', opacity:0.6,
   }).addTo(threatLayerGroup);
 
   marker.on('click', ()=>selectThreat(threat.id));
@@ -447,6 +548,41 @@ const API_NAMES = {
   kyiv: ['Київська область', 'м. Київ'], sevastopol: ['м. Севастополь'],
 };
 
+/* ============================================================
+   9. Вкладки в бічній панелі: "Цілі" <-> "Повідомлення"
+   ============================================================ */
+const threatListEl = document.getElementById('threat-list');
+const messageFeedEl = document.getElementById('message-feed');
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const showThreats = btn.dataset.tab === 'threats';
+    threatListEl.style.display = showThreats ? '' : 'none';
+    messageFeedEl.style.display = showThreats ? 'none' : '';
+  });
+});
+
+let feedMessages = [];
+function pushFeedMessage(text, kind){
+  feedMessages.unshift({ text, kind, time: new Date() });
+  feedMessages = feedMessages.slice(0, 100); // не даємо стрічці розростатись нескінченно
+  renderFeed();
+}
+function renderFeed(){
+  if(!feedMessages.length){
+    messageFeedEl.innerHTML = `<div class="feed-empty">Тут з'являтимуться повідомлення про початок і кінець тривог по областях.</div>`;
+    return;
+  }
+  messageFeedEl.innerHTML = feedMessages.map(m=>{
+    const time = m.time.toLocaleTimeString('uk-UA', {hour12:false});
+    return `<div class="feed-item ${m.kind||''}"><span class="feed-time">${time}</span>${m.text}</div>`;
+  }).join('');
+}
+renderFeed();
+
+let prevAlertState = null; // null = ще не знаємо (перше опитування, без сповіщень)
+
 async function pollRealAlerts(){
   try{
     const res = await fetch('/api/alerts', {cache:'no-store'});
@@ -460,13 +596,27 @@ async function pollRealAlerts(){
     if(data.error){ badge.textContent = 'Помилка з’єднання з API'; return; }
 
     const activeNames = new Set(data.active_oblasts || []);
+    const nextState = {};
     let alertedCount = 0;
+
     Object.keys(API_NAMES).forEach(id=>{
       const alerted = API_NAMES[id].some(n=>activeNames.has(n));
+      nextState[id] = alerted;
       setOblastAlerted(id, alerted);
       if(alerted) alertedCount++;
     });
     document.getElementById('stat-oblasts').textContent = alertedCount;
+
+    if(prevAlertState){
+      Object.keys(nextState).forEach(id=>{
+        if(nextState[id] !== prevAlertState[id]){
+          const name = oblastNameById(id);
+          if(nextState[id]) pushFeedMessage(`🔴 Тривога: <b>${name}</b>`, 'alert-on');
+          else pushFeedMessage(`🟢 Відбій тривоги: <b>${name}</b>`, 'alert-off');
+        }
+      });
+    }
+    prevAlertState = nextState;
 
     const t = new Date(data.updated_at || Date.now());
     badge.textContent = 'Реальні дані · оновлено ' + t.toLocaleTimeString('uk-UA', {hour12:false});
