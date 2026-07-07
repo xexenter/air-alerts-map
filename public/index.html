@@ -261,7 +261,8 @@
       <div class="demo-badge" id="demo-badge">Завантаження реальних даних…</div>
       <div class="legend">
         <div class="legend-row"><span class="swatch" style="background:#2C3A52"></span> Спокійно</div>
-        <div class="legend-row"><span class="swatch" style="background:var(--alert)"></span> Повітряна тривога</div>
+        <div class="legend-row"><span class="swatch" style="background:#C13B3B"></span> Тривога на всю область</div>
+        <div class="legend-row"><span class="swatch" style="background:#C97B6B"></span> Тривога частково (район/громада)</div>
         <div class="legend-row"><span class="swatch" style="background:var(--threat)"></span> Ціль у повітрі (клікабельна)</div>
       </div>
       <div class="drawer-backdrop" id="drawer-backdrop"></div>
@@ -373,12 +374,17 @@ oblastLayer.eachLayer(layer => {
   oblastLayersById[layer.feature.properties.id] = layer;
 });
 
-function setOblastAlerted(id, alerted){
+function setOblastAlerted(id, state){
+  // state: 'full' | 'partial' | null
   const layer = oblastLayersById[id];
   if(!layer) return;
-  layer.setStyle(alerted
-    ? { color:'#C13B3B', weight:1.5, fillColor:'#C13B3B', fillOpacity:0.5 }
-    : { color:'#8FA6C7', weight:1, fillColor:'#2C3A52', fillOpacity:0.18 });
+  if(state === 'full'){
+    layer.setStyle({ color:'#C13B3B', weight:1.5, fillColor:'#C13B3B', fillOpacity:0.55 });
+  } else if(state === 'partial'){
+    layer.setStyle({ color:'#C97B6B', weight:1.2, fillColor:'#C97B6B', fillOpacity:0.32 });
+  } else {
+    layer.setStyle({ color:'#8FA6C7', weight:1, fillColor:'#2C3A52', fillOpacity:0.18 });
+  }
 }
 
 /* ============================================================
@@ -671,14 +677,16 @@ async function pollRealAlerts(){
     if(data.error){ badge.textContent = 'Помилка з’єднання з API'; return; }
 
     const activeNames = new Set(data.active_oblasts || []);
+    const fullNames = new Set(data.full_oblasts || []);
     const nextState = {};
     let alertedCount = 0;
 
     Object.keys(API_NAMES).forEach(id=>{
-      const alerted = API_NAMES[id].some(n=>activeNames.has(n));
-      nextState[id] = alerted;
-      setOblastAlerted(id, alerted);
-      if(alerted) alertedCount++;
+      const isActive = API_NAMES[id].some(n=>activeNames.has(n));
+      const isFull = API_NAMES[id].some(n=>fullNames.has(n));
+      nextState[id] = isActive;
+      setOblastAlerted(id, isActive ? (isFull ? 'full' : 'partial') : null);
+      if(isActive) alertedCount++;
     });
     document.getElementById('stat-oblasts').textContent = alertedCount;
 
@@ -702,7 +710,7 @@ async function pollRealAlerts(){
 }
 
 pollRealAlerts();
-setInterval(pollRealAlerts, 20000);
+setInterval(pollRealAlerts, 7000);
 
 /* ============================================================
    10. Мобільна шторка (drawer) — відкриття кнопкою, свайпом з

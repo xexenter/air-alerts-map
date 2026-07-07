@@ -40,15 +40,23 @@ export default async function handler(req, res) {
     const data = await upstream.json();
     const alerts = Array.isArray(data) ? data : data.alerts || [];
 
-    // Нас цікавить повітряна тривога саме на рівні всієї області —
-    // це те, що ми фарбуємо на карті. Деталізовані тривоги по районах/
-    // громадах (location_type: raion/hromada/city) тут навмисно
-    // ігноруються, щоб не заплутати карту областей.
+    // ВАЖЛИВО: тривога буває оголошена на всю область (location_type:"oblast")
+    // АБО лише на окремі райони/громади всередині області (location_type:
+    // raion/hromada/city) — на самому alerts.in.ua другий випадок теж
+    // підсвічує область (блідішим кольором). Щоб наша карта збігалася з
+    // офіційною, рахуємо обидва випадки: беремо location_oblast (це поле
+    // є в кожному записі і завжди вказує на "батьківську" область), а для
+    // Києва/Севастополя, які самі є окремими одиницями без області-батька,
+    // використовуємо їх власний location_title.
     const activeOblasts = new Set();
+    const fullOblasts = new Set(); // ті, де тривога на ВСЮ область (для майбутнього більш точного відображення)
     for (const alert of alerts) {
-      if (alert.location_type === 'oblast' && alert.alert_type === 'air_raid') {
-        activeOblasts.add(alert.location_title);
-      }
+      if (alert.alert_type !== 'air_raid') continue;
+      const groupName = alert.location_type === 'oblast'
+        ? alert.location_title
+        : (alert.location_oblast || alert.location_title);
+      activeOblasts.add(groupName);
+      if (alert.location_type === 'oblast') fullOblasts.add(groupName);
     }
 
     // Кешуємо відповідь на рівні CDN Vercel на 15 секунд. Це означає, що
@@ -59,6 +67,7 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
     res.status(200).json({
       active_oblasts: [...activeOblasts],
+      full_oblasts: [...fullOblasts],
       updated_at: new Date().toISOString(),
     });
   } catch (err) {
