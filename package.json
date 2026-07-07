@@ -2,6 +2,7 @@
   "name": "air-alerts-map",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Карта повітряних тривог по областях України (alerts.in.ua) + демо-симуляція цілей + Telegram-бот",
   "dependencies": {
     "@vercel/kv": "latest"
