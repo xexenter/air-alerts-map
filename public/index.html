@@ -64,7 +64,18 @@
     font-size:9px !important;
   }
   .leaflet-control-attribution a{ color:var(--text-muted) !important; }
-  .leaflet-interactive{ transition:fill 0.6s ease, fill-opacity 0.6s ease, stroke 0.6s ease; }
+  .leaflet-interactive{ transition:fill 0.6s ease, fill-opacity 0.6s ease, stroke 0.6s ease; cursor:pointer; }
+
+  .leaflet-popup-content-wrapper{
+    background:var(--bg-panel); color:var(--text-main);
+    border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,0.45);
+  }
+  .leaflet-popup-tip{ background:var(--bg-panel); border:1px solid var(--line); }
+  .leaflet-popup-close-button{ color:var(--text-muted) !important; }
+  .oblast-popup{ font-family:'IBM Plex Sans'; font-size:12.5px; line-height:1.6; }
+  .oblast-popup b{ font-size:13.5px; }
+  .popup-muted{ color:var(--text-muted); font-size:10.5px; font-family:'IBM Plex Mono'; }
 
   .demo-badge{
     position:absolute; top:16px; right:16px; z-index:500;
@@ -364,12 +375,63 @@ const oblastLayer = L.geoJSON(OBLAST_GEOJSON, {
 }).addTo(map);
 
 const oblastLayersById = {};
+let oblastStatus = {};     // id -> 'full' | 'partial' | null
+let oblastStartedAt = {};  // id -> ISO-рядок реального часу початку тривоги (з alerts.in.ua) або null
+let activePopup = null;
+let activePopupOblastId = null;
+
+function formatDuration(ms){
+  if(ms < 0) ms = 0;
+  const totalMin = Math.floor(ms/60000);
+  const h = Math.floor(totalMin/60), m = totalMin%60, s = Math.floor((ms%60000)/1000);
+  if(h>0) return `${h} год ${m} хв`;
+  if(m>0) return `${m} хв ${s} с`;
+  return `${s} с`;
+}
+
+function getOblastPopupHtml(id){
+  const name = oblastNameById(id);
+  const status = oblastStatus[id];
+  let body;
+  if(status){
+    const startedIso = oblastStartedAt[id];
+    const durationText = startedIso ? formatDuration(Date.now() - new Date(startedIso).getTime()) : 'невідомо';
+    const label = status === 'full' ? '🔴 Тривога на всю область' : '🟠 Часткова тривога (район/громада)';
+    const startedText = startedIso
+      ? new Date(startedIso).toLocaleTimeString('uk-UA', {hour12:false})
+      : '—';
+    body = `${label}<br>Триває: <b>${durationText}</b><br><span class="popup-muted">Почалась о ${startedText} (реальний час з alerts.in.ua)</span>`;
+  } else {
+    body = `🟢 Зараз спокійно`;
+  }
+  return `<div class="oblast-popup"><b>${name}</b><br>${body}</div>`;
+}
+
 oblastLayer.eachLayer(layer => {
-  oblastLayersById[layer.feature.properties.id] = layer;
+  const id = layer.feature.properties.id;
+  oblastLayersById[id] = layer;
+
+  layer.on('click', (e)=>{
+    activePopupOblastId = id;
+    activePopup = L.popup({ className:'oblast-popup-wrap', maxWidth:240 })
+      .setLatLng(e.latlng)
+      .setContent(getOblastPopupHtml(id))
+      .openOn(map);
+    activePopup.on('remove', ()=>{ if(activePopupOblastId===id) activePopupOblastId=null; });
+  });
 });
+
+// Поки попап відкритий — секундомір триває тривоги оновлюється щосекунди,
+// а не застигає на моменті кліку.
+setInterval(()=>{
+  if(activePopupOblastId && activePopup && map.hasLayer(activePopup)){
+    activePopup.setContent(getOblastPopupHtml(activePopupOblastId));
+  }
+}, 1000);
 
 function setOblastAlerted(id, state){
   // state: 'full' | 'partial' | null
+  oblastStatus[id] = state;
   const layer = oblastLayersById[id];
   if(!layer) return;
   if(state === 'full'){
@@ -672,6 +734,7 @@ async function pollRealAlerts(){
 
     const activeNames = new Set(data.active_oblasts || []);
     const fullNames = new Set(data.full_oblasts || []);
+    const startedAtByName = data.started_at || {};
     const nextState = {};
     let alertedCount = 0;
 
@@ -681,6 +744,16 @@ async function pollRealAlerts(){
       nextState[id] = isActive;
       setOblastAlerted(id, isActive ? (isFull ? 'full' : 'partial') : null);
       if(isActive) alertedCount++;
+
+      // Реальний час початку тривоги (з alerts.in.ua, а не з моменту,
+      // коли сайт про це дізнався) — беремо найраніший серед усіх назв,
+      // що стосуються цієї області (наприклад, і "Київська область", і "м. Київ").
+      if(isActive){
+        const times = API_NAMES[id].map(n=>startedAtByName[n]).filter(Boolean);
+        oblastStartedAt[id] = times.length ? times.sort()[0] : (oblastStartedAt[id] || null);
+      } else {
+        oblastStartedAt[id] = null;
+      }
     });
     document.getElementById('stat-oblasts').textContent = alertedCount;
 

@@ -50,6 +50,8 @@ export default async function handler(req, res) {
     // використовуємо їх власний location_title.
     const activeOblasts = new Set();
     const fullOblasts = new Set(); // ті, де тривога на ВСЮ область (для майбутнього більш точного відображення)
+    const startedAt = {}; // groupName -> найраніший started_at серед усіх записів, що стосуються цієї області
+
     for (const alert of alerts) {
       if (alert.alert_type !== 'air_raid') continue;
       const groupName = alert.location_type === 'oblast'
@@ -57,6 +59,17 @@ export default async function handler(req, res) {
         : (alert.location_oblast || alert.location_title);
       activeOblasts.add(groupName);
       if (alert.location_type === 'oblast') fullOblasts.add(groupName);
+
+      // Реальний час початку ЦІЄЇ конкретної тривоги (не час, коли сайт
+      // її вперше побачив!) — беремо найраніший з усіх записів, що
+      // стосуються області (наприклад, якщо тривога почалась в одному
+      // районі, а потім поширилась — рахуємо від найпершого запису).
+      if (alert.started_at) {
+        const prev = startedAt[groupName];
+        if (!prev || new Date(alert.started_at) < new Date(prev)) {
+          startedAt[groupName] = alert.started_at;
+        }
+      }
     }
 
     // Кешуємо відповідь на рівні CDN Vercel на 15 секунд. Це означає, що
@@ -68,6 +81,7 @@ export default async function handler(req, res) {
     res.status(200).json({
       active_oblasts: [...activeOblasts],
       full_oblasts: [...fullOblasts],
+      started_at: startedAt,
       updated_at: new Date().toISOString(),
     });
   } catch (err) {
