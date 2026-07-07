@@ -205,29 +205,23 @@
     aside.open{ transform:translateX(0); }
 
     .drawer-handle{
+      position:absolute; left:-18px; top:50%; transform:translateY(-50%);
       display:flex; align-items:center; justify-content:center;
-      height:22px; cursor:grab; touch-action:none;
+      width:18px; height:56px; cursor:grab; touch-action:none;
+      background:rgba(18,27,46,0.9); border:1px solid var(--line); border-right:none;
+      border-radius:8px 0 0 8px;
     }
     .drawer-handle span{
-      width:36px; height:4px; border-radius:2px; background:var(--line);
+      width:4px; height:32px; border-radius:2px; background:var(--line);
     }
 
     .legend{ font-size:10px; padding:8px 10px; gap:4px; left:10px; bottom:10px; }
     .demo-badge{ font-size:9px; top:10px; right:10px; padding:5px 8px; max-width:60vw; }
-  }
 
-  /* коли шторка відкрита знизу (альтернативний свайп-жест "знизу вгору"
-     на дуже вузьких екранах) — та сама панель, просто інший бік */
-  @media (max-width: 480px){
-    aside{
-      top:auto; right:0; bottom:0; left:0;
-      width:100%; max-width:none; height:78vh;
-      transform:translateY(100%);
-      border-left:none; border-top:1px solid var(--line);
-      box-shadow:0 -8px 24px rgba(0,0,0,0.45);
-    }
-    aside.open{ transform:translateY(0); }
-    .drawer-fab{ bottom:24px; }
+    /* на дуже вузьких телефонах панель трохи ширша відносно екрана,
+       але лишається саме БОКОВОЮ шторкою — так само, як свайп, яким
+       її відкривають (вбік, а не знизу) */
+    aside{ width:88vw; max-width:340px; }
   }
 </style>
 </head>
@@ -698,6 +692,16 @@ async function pollRealAlerts(){
           else pushFeedMessage(`🟢 Відбій тривоги: <b>${name}</b>`, 'alert-off');
         }
       });
+    } else {
+      // Перше опитування — стрічка ще порожня, показуємо поточний стан
+      // одразу, щоб вкладка "Повідомлення" не виглядала мертвою до
+      // першої реальної зміни (яка може статись і за годину, і за хвилину).
+      const activeNow = Object.keys(nextState).filter(id=>nextState[id]);
+      if(activeNow.length){
+        pushFeedMessage(`ℹ️ Зараз у тривозі: ${activeNow.map(oblastNameById).join(', ')}`, '');
+      } else {
+        pushFeedMessage('ℹ️ Зараз тривог немає (за станом на момент відкриття сайту)', '');
+      }
     }
     prevAlertState = nextState;
 
@@ -785,9 +789,8 @@ renderThreatList = function(){
   function onMove(e){
     if(!dragging) return;
     const t = e.touches ? e.touches[0] : e;
-    const dx = t.clientX - startX, dy = t.clientY - startY;
-    const bottomSheet = window.matchMedia('(max-width: 480px)').matches;
-    if(bottomSheet ? dy > 60 : dx > 60){
+    const dx = t.clientX - startX;
+    if(dx > 60){
       closeDrawer(); dragging=false;
     }
   }
